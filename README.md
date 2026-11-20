@@ -2,6 +2,10 @@
 
 **Paste a YouTube link, get an MP4 or MP3 on your Mac.**
 
+<p align="center">
+  <img src="docs/demo.gif" alt="YT Grab demo: click the menu-bar icon, paste three links, click Download, and watch them finish" width="600">
+</p>
+
 YT Grab is a free little app that lives in your Mac's menu bar. Paste one or more links from YouTube (or TikTok, Vimeo, SoundCloud and [many more sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)), choose video or audio, and the files land in your **Downloads** folder.
 
 - Runs entirely on your Mac. There's no website, no ads, no account and no upload limit.
@@ -117,6 +121,8 @@ To download every link in a buffer (one per line), run `:w !ytgrab`. Add `-a` af
 ## How it works (for developers)
 
 `bin/ytgrab` is a Bash wrapper that turns your options into yt-dlp flags (format sorting for H.264 MP4, or extraction to MP3 with embedded cover art). `install.sh` compiles the menu-bar app with `swiftc` and installs it into `~/Applications`. The app (`app/YTGrab.swift`, SwiftUI) bundles that same script. It runs the script once per link with `YTGRAB_MACHINE=1`, which switches the output to simple `TITLE` / `PCT` / `FILE` lines that the app parses to show progress.
+
+To regenerate `docs/demo.gif` after changing the UI, run `./demo/make-demo.sh`. It renders the real `PanelView` off-screen through a scripted session and encodes the frames with ffmpeg.
 
 ## License
 
