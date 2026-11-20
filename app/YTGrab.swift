@@ -33,6 +33,7 @@ final class Job: ObservableObject, Identifiable {
 @MainActor
 final class Downloader: ObservableObject {
     @Published var jobs: [Job] = []
+    @Published var draft = ""
     @AppStorage("format") var format: Format = .mp4
     @AppStorage("quality") var quality: Int = 1080
     @AppStorage("bitrate") var bitrate: Int = 320
@@ -186,9 +187,14 @@ struct JobRow: View {
     }
 }
 
+private struct ListHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct PanelView: View {
     @EnvironmentObject var dl: Downloader
-    @State private var text = ""
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -204,14 +210,14 @@ struct PanelView: View {
             }
 
             ZStack(alignment: .topLeading) {
-                TextEditor(text: $text)
+                TextEditor(text: $dl.draft)
                     .font(.system(size: 12, design: .monospaced))
                     .scrollContentBackground(.hidden)
                     .padding(4)
                     .frame(height: 70)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-                if text.isEmpty {
+                if dl.draft.isEmpty {
                     Text("Paste links, one per line")
                         .font(.system(size: 12))
                         .foregroundStyle(.tertiary)
@@ -236,29 +242,34 @@ struct PanelView: View {
                 Spacer()
                 Button("Paste") {
                     if let s = NSPasteboard.general.string(forType: .string) {
-                        text = text.isEmpty ? s : text + "\n" + s
+                        dl.draft = dl.draft.isEmpty ? s : dl.draft + "\n" + s
                     }
                 }
                 Button("Download") {
-                    dl.start(text)
-                    text = ""
+                    dl.start(dl.draft)
+                    dl.draft = ""
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 .buttonStyle(.borderedProminent)
-                .disabled(!text.contains("http"))
+                .disabled(!dl.draft.contains("http"))
             }
             .controlSize(.small)
 
             if !dl.jobs.isEmpty {
                 Divider()
+                // Size the list to its rows, scrolling only past 220pt
                 ScrollView {
                     VStack(spacing: 4) {
                         ForEach(dl.jobs) { job in
                             JobRow(job: job) { dl.cancel(job) }
                         }
                     }
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: ListHeightKey.self, value: g.size.height)
+                    })
                 }
-                .frame(maxHeight: 220)
+                .frame(height: min(listHeight, 220))
+                .onPreferenceChange(ListHeightKey.self) { listHeight = $0 }
             }
 
             Divider()
@@ -278,6 +289,8 @@ struct PanelView: View {
     }
 }
 
+// The demo recorder (demo/main.swift) supplies its own entry point
+#if !DEMO
 @main
 struct YTGrabApp: App {
     @StateObject private var dl = Downloader()
@@ -291,3 +304,4 @@ struct YTGrabApp: App {
         .menuBarExtraStyle(.window)
     }
 }
+#endif
