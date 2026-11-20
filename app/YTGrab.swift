@@ -13,19 +13,44 @@ enum JobState: Equatable {
     case failed(String)
 }
 
+// Reassembles pipe chunks into whole lines; only touched from one pipe's handler queue
+final class LineBuffer: @unchecked Sendable {
+    private var pending = Data()
+
+    func append(_ data: Data) -> [String] {
+        pending.append(data)
+        var lines: [String] = []
+        while let nl = pending.firstIndex(of: 0x0A) {
+            let lineData = pending[pending.startIndex..<nl]
+            pending.removeSubrange(pending.startIndex...nl)
+            if let line = String(data: lineData, encoding: .utf8), !line.isEmpty {
+                lines.append(line)
+            }
+        }
+        return lines
+    }
+}
+
 @MainActor
 final class Job: ObservableObject, Identifiable {
     let id = UUID()
     let url: String
+    let isAudio: Bool
     @Published var title: String
     @Published var progress: Double = 0
     @Published var state: JobState = .running
     @Published var filePath: String?
+    // False until the first byte arrives; the bar animates instead of sitting empty
+    @Published var started = false
+    // True while ffmpeg merges or converts after the download
+    @Published var processing = false
+    @Published var detail = "Starting…"
     var lastError = ""
     var process: Process?
 
-    init(url: String) {
+    init(url: String, isAudio: Bool = false) {
         self.url = url
+        self.isAudio = isAudio
         self.title = url
     }
 }
@@ -46,12 +71,18 @@ final class Downloader: ObservableObject {
 
     var activeCount: Int { jobs.filter { $0.state == .running }.count }
 
+    var overallProgress: Double {
+        let running = jobs.filter { $0.state == .running }
+        guard !running.isEmpty else { return 0 }
+        return running.map(\.progress).reduce(0, +) / Double(running.count)
+    }
+
     func start(_ text: String) {
         let links = text
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { $0.hasPrefix("http") }
         for link in links {
-            let job = Job(url: link)
+            let job = Job(url: link, isAudio: format == .mp3)
             jobs.insert(job, at: 0)
             run(job)
         }
@@ -79,10 +110,12 @@ final class Downloader: ObservableObject {
         p.standardOutput = out
         p.standardError = err
 
+        let outLines = LineBuffer()
         out.fileHandleForReading.readabilityHandler = { h in
-            guard let s = String(data: h.availableData, encoding: .utf8), !s.isEmpty else { return }
-            for line in s.split(separator: "\n") {
-                Task { @MainActor in self.handle(String(line), job: job) }
+            let lines = outLines.append(h.availableData)
+            guard !lines.isEmpty else { return }
+            Task { @MainActor in
+                for line in lines { self.handle(line, job: job) }
             }
         }
         err.fileHandleForReading.readabilityHandler = { h in
@@ -117,14 +150,59 @@ final class Downloader: ObservableObject {
     }
 
     private func handle(_ line: String, job: Job) {
+        // Job changes don't publish through Downloader, so nudge it for the menu-bar percentage
+        objectWillChange.send()
         if line.hasPrefix("TITLE ") {
             job.title = String(line.dropFirst(6))
         } else if line.hasPrefix("FILE ") {
             job.filePath = String(line.dropFirst(5))
         } else if line.hasPrefix("PCT ") {
-            let num = line.dropFirst(4).trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "%", with: "")
-            if let v = Double(num) { job.progress = v / 100 }
+            handleProgress(String(line.dropFirst(4)), job: job)
+        } else if line.hasPrefix("POST ") {
+            let parts = line.dropFirst(5).split(separator: "|").map(String.init)
+            guard parts.count == 2, parts[1] == "started" else { return }
+            switch parts[0] {
+            case "Merger": job.detail = "Merging video and audio…"
+            case "ExtractAudio": job.detail = "Converting to MP3…"
+            case "FFmpegVideoRemuxer", "FFmpegVideoConvertor": job.detail = "Converting to MP4…"
+            default: return
+            }
+            job.processing = true
         }
+    }
+
+    // Line format: percent|speed|eta|vcodec|acodec
+    private func handleProgress(_ payload: String, job: Job) {
+        let f = payload.split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard f.count >= 5, let pct = Double(f[0].replacingOccurrences(of: "%", with: "")) else { return }
+        let part = pct / 100
+        let hasVideo = f[3] != "none" && !f[3].isEmpty && f[3] != "NA"
+        let hasAudio = f[4] != "none" && !f[4].isEmpty && f[4] != "NA"
+
+        // A video download is usually two passes (picture, then sound); give the sound the last 10%
+        let label: String
+        if job.isAudio || (hasVideo && hasAudio) {
+            job.progress = part
+            label = "Downloading"
+        } else if hasVideo {
+            job.progress = part * 0.9
+            label = "Downloading video"
+        } else {
+            job.progress = 0.9 + part * 0.1
+            label = "Downloading audio"
+        }
+        job.started = true
+        job.processing = false
+
+        var bits = [label, "\(Int(pct))%"]
+        if !f[1].isEmpty, !f[1].contains("Unknown"), f[1] != "NA" {
+            bits.append(f[1].replacingOccurrences(of: "iB", with: "B"))
+        }
+        if !f[2].isEmpty, !f[2].contains("Unknown"), f[2] != "NA" {
+            bits.append("\(f[2]) left")
+        }
+        job.detail = bits.joined(separator: " · ")
     }
 
     func cancel(_ job: Job) {
@@ -151,9 +229,21 @@ struct JobRow: View {
                     .font(.system(size: 12, weight: .medium))
                 switch job.state {
                 case .running:
-                    ProgressView(value: job.progress)
-                        .progressViewStyle(.linear)
-                        .controlSize(.small)
+                    Group {
+                        if job.started && !job.processing {
+                            ProgressView(value: job.progress)
+                        } else {
+                            ProgressView()
+                        }
+                    }
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+                    .tint(.accentColor)
+                    Text(job.detail)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 case .done:
                     Text("Saved").font(.caption).foregroundStyle(.secondary)
                 case .failed(let msg):
@@ -299,7 +389,14 @@ struct YTGrabApp: App {
         MenuBarExtra {
             PanelView().environmentObject(dl)
         } label: {
-            Image(systemName: dl.activeCount > 0 ? "arrow.down.circle.fill" : "arrow.down.circle")
+            if dl.activeCount > 0 {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("\(Int(dl.overallProgress * 100))%").monospacedDigit()
+                }
+            } else {
+                Image(systemName: "arrow.down.circle")
+            }
         }
         .menuBarExtraStyle(.window)
     }

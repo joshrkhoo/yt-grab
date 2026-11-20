@@ -86,7 +86,8 @@ fi
 if [[ -n "${YTGRAB_MACHINE:-}" ]]; then
   args+=(
     --quiet --progress --newline --no-simulate
-    --progress-template "download:PCT %(progress._percent_str)s"
+    --progress-template "download:PCT %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.vcodec)s|%(info.acodec)s"
+    --progress-template "postprocess:POST %(progress.postprocessor)s|%(progress.status)s"
     --print "before_dl:TITLE %(title)s"
     --print "after_move:FILE %(filepath)s"
   )
