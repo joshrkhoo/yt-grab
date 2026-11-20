@@ -39,7 +39,13 @@ ytgrab -U                                        # update yt-dlp
 
 In zsh, put quotes around links that contain `?` (`ytgrab 'https://youtube.com/watch?v=...'`), or zsh will treat them as file patterns. Running `ytgrab` with no arguments and pasting avoids this.
 
-From Vim, put the cursor on a link and run `:!ytgrab <cWORD>`, or download every link in the buffer with `:w !ytgrab`.
+From Vim, put the cursor on a link and run:
+
+```vim
+:exe '!ytgrab' shellescape(expand('<cWORD>'), 1)
+```
+
+To download every link in a buffer (one per line), run `:w !ytgrab`. Add `-a` after `ytgrab` in either command for MP3.
 
 ## Notes
 
