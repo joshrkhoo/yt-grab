@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# ytgrab: paste links, get MP4/MP3 files on this Mac. Wraps yt-dlp + ffmpeg.
+set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+mode="video"
+quality=1080
+bitrate=320
+outdir="${YTGRAB_DIR:-$HOME/Downloads}"
+playlist=0
+urls=()
+
+usage() {
+  cat <<EOF
+Usage: ytgrab [options] [url ...]
+
+Downloads each link to $outdir. With no urls, paste links one per line
+(blank line or Ctrl-D to start).
+
+Options:
+  -a, --audio        MP3 instead of MP4
+  -q, --quality N    max video height (default 1080; e.g. 720, 480)
+  -b, --bitrate N    MP3 bitrate in kb/s (default 320)
+  -o, --out DIR      save folder (default ~/Downloads, or \$YTGRAB_DIR)
+  -p, --playlist     download the whole playlist if the link has one
+  -U, --update       update yt-dlp
+  -h, --help         show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -a|--audio) mode="audio" ;;
+    -q|--quality) quality="${2:?}"; shift ;;
+    -b|--bitrate) bitrate="${2:?}"; shift ;;
+    -o|--out) outdir="${2:?}"; shift ;;
+    -p|--playlist) playlist=1 ;;
+    -U|--update) exec brew upgrade yt-dlp ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "ytgrab: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *) urls+=("$1") ;;
+  esac
+  shift
+done
+
+if ! command -v yt-dlp >/dev/null || ! command -v ffmpeg >/dev/null; then
+  echo "ytgrab: needs yt-dlp and ffmpeg. Run: brew install yt-dlp ffmpeg deno" >&2
+  exit 1
+fi
+
+if [[ ${#urls[@]} -eq 0 ]]; then
+  [[ -t 0 ]] && echo "Paste links (one per line), then press Enter on a blank line:"
+  while IFS= read -r line; do
+    line="${line//[[:space:]]/}"
+    [[ -z "$line" ]] && { [[ -t 0 ]] && break || continue; }
+    urls+=("$line")
+  done
+fi
+
+[[ ${#urls[@]} -eq 0 ]] && { echo "ytgrab: no links given" >&2; exit 2; }
+
+mkdir -p "$outdir"
+
+args=(
+  --paths "$outdir"
+  --output "%(title)s.%(ext)s"
+  --windows-filenames
+  --embed-metadata
+)
+
+[[ $playlist -eq 1 ]] && args+=(--yes-playlist) || args+=(--no-playlist)
+
+if [[ "$mode" == "audio" ]]; then
+  args+=(--extract-audio --audio-format mp3 --audio-quality "${bitrate}K" --embed-thumbnail)
+else
+  # Prefer H.264 + AAC so the file plays in QuickTime and imports into Photos/iMovie
+  args+=(
+    --format-sort "res:${quality},vcodec:h264,acodec:aac"
+    --format "bv*[height<=${quality}]+ba/b[height<=${quality}]/b"
+    --merge-output-format mp4
+  )
+fi
+
+# Machine-readable output for the menu-bar app
+if [[ -n "${YTGRAB_MACHINE:-}" ]]; then
+  args+=(
+    --quiet --progress --newline --no-simulate
+    --progress-template "download:PCT %(progress._percent_str)s"
+    --print "before_dl:TITLE %(title)s"
+    --print "after_move:FILE %(filepath)s"
+  )
+fi
+
+status=0
+for url in "${urls[@]}"; do
+  yt-dlp "${args[@]}" -- "$url" || status=1
+done
+
+if [[ -z "${YTGRAB_MACHINE:-}" ]]; then
+  [[ $status -eq 0 ]] && echo "Saved to $outdir" || echo "Some downloads failed (see above)." >&2
+fi
+exit $status
