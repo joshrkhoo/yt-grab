@@ -80,7 +80,9 @@ brew upgrade yt-dlp
 3. Choose **MP4** or **MP3**, and a quality or bitrate.
 4. Click **Download** or press ⌘↩.
 
-Each link shows its title and progress. ✕ cancels it, and the magnifying glass shows the finished file in Finder. Downloads keep running after you close the panel. The icon fills in while any are running, and a sound plays when each one finishes.
+Each link shows its title, a progress bar and what's happening ("Downloading video · 42% · 3.1 MB/s · 00:12 left", then "Merging video and audio…"). ✕ cancels it, and the magnifying glass shows the finished file in Finder. Downloads keep running after you close the panel. While any are running, the menu bar shows the overall percentage next to the icon (↓ 42%), and a sound plays when each one finishes.
+
+The first few seconds of each download show "Starting…" while YouTube is contacted. That's normal.
 
 ## Using it from Terminal
 

@@ -13,6 +13,7 @@ final class DemoState: ObservableObject {
     @Published var cursor = CGPoint(x: 230, y: 300)
     @Published var panelOpen = false
     @Published var iconActive = false
+    @Published var percent = 0
     @Published var keycap: String?
     @Published var clickAt: CGPoint?
     @Published var clickAge = 0.0
@@ -98,8 +99,13 @@ struct DemoScene: View {
             Text("Edit")
             Text("View")
             Spacer()
-            Image(systemName: s.iconActive ? "arrow.down.circle.fill" : "arrow.down.circle")
-                .font(.system(size: 15))
+            HStack(spacing: 3) {
+                Image(systemName: s.iconActive ? "arrow.down.circle.fill" : "arrow.down.circle")
+                    .font(.system(size: 15))
+                if s.iconActive {
+                    Text("\(s.percent)%").monospacedDigit()
+                }
+            }
                 .padding(.horizontal, 6).padding(.vertical, 2)
                 .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(s.panelOpen ? 0.28 : 0)))
             Image(systemName: "wifi")
@@ -177,10 +183,17 @@ func apply(_ t: Double, _ s: DemoState, _ dl: Downloader) {
             job.filePath = "/tmp/x"
         } else {
             job.state = .running
-            job.progress = max(0, phase(t, tm.start, tm.end))
+            let p = max(0, phase(t, tm.start, tm.end))
+            job.progress = p
+            job.started = t >= tm.start
+            let left = Int(ceil((tm.end - t) * 1.6))
+            job.detail = job.started
+                ? "Downloading video · \(Int(p * 100))% · \(String(format: "%.1f", 3.2 + Double(i) * 1.1)) MB/s · 00:\(String(format: "%02d", left)) left"
+                : "Starting…"
         }
     }
     s.iconActive = dl.jobs.contains { $0.state == .running }
+    s.percent = Int(dl.overallProgress * 100)
 }
 
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "frames"
